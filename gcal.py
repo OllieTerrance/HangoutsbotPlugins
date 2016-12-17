@@ -18,6 +18,7 @@ from httplib2 import Http
 import logging
 import shlex
 
+from dateutil.parser import parse
 from googleapiclient.discovery import build
 from oauth2client.client import OAuth2WebServerFlow
 from oauth2client.file import Storage
@@ -30,37 +31,30 @@ DATETIME = "%Y-%m-%dT%H:%M:%SZ"
 
 logger = logging.getLogger(__name__)
 config = None
-service = None
-cache = {}
+api = None
+resps = {}
 
 
-def _initialise(bot):
-    global config, service
-    config = bot.get_config_option("gcal")
-    if not config or "secrets" not in config:
-        logger.error("gcal: missing path to secrets file")
-        return
-    store = Storage(config["secrets"])
-    http = store.get().authorize(Http())
-    service = build("calendar", "v3", http=http)
-    plugins.register_user_command(["calendar"])
+def parse_date(d):
+    start = parse(d, dayfirst=True, fuzzy=True, ignoretz=True) # can't handle tz
+    return start.date() if start.hour == start.minute == 0 else start
+
 
 def pretty_date(d):
-    now = datetime.utcnow()
+    now = datetime.now()
     if isinstance(d, datetime):
-        diff = d - now
-        if diff.seconds < 0:
+        diff_secs = (d - now).seconds
+        diff_days = (d.date() - now.date()).days
+        if diff_secs < 0:
             return "now"
-        elif diff.days == 0:
-            if diff.seconds < 60 * 60:
-                mins = diff.seconds // 60
-                return "in {} minute{}".format(mins, "" if mins == 1 else "s") # in 10 minutes
-            else:
-                hrs = diff.seconds // (60 * 60)
-                return "in {} hour{}".format(hrs, "" if hrs == 1 else "s") # in 3 hours
-        elif diff.days == 1:
+        elif diff_secs < 60 * 60:
+            mins = diff_secs // 60
+            return "in {} minute{}".format(mins, "" if mins == 1 else "s") # in 10 minutes
+        elif diff_days == 0:
+            return "today {}".format(d.strftime("%H:%M")) # today 11:30
+        elif diff_days == 1:
             return "tomorrow {}".format(d.strftime("%H:%M")) # tomorrow 11:30
-        elif diff.days < 7:
+        elif 1 < diff_days < 7:
             return d.strftime("%A %H:%M") # Monday 11:30
         else:
             return d.strftime("%d/%m/%Y %H:%M") # 19/12/2016 11:30
@@ -71,89 +65,197 @@ def pretty_date(d):
             return "today"
         elif diff.days == 1:
             return "tomorrow"
-        elif diff.days < 7:
+        elif 1 < diff.days < 7:
             return d.strftime("%A") # Monday
         else:
             return d.strftime("%d/%m/%Y") # 19/12/2016
 
-def cal_list(cal):
-    resp = service.events().list(calendarId=cal,
-                                 timeMin=date.today().strftime(DATETIME),
-                                 singleEvents=True, orderBy="startTime").execute()
-    cache[cal] = resp["items"]
-    if not resp["items"]:
-        return "No upcoming events."
-    msg = "Upcoming events:"
-    for pos, item in enumerate(resp["items"]):
+
+class Event(object):
+
+    def __init__(self, api, cal, id, title, time, place=None, desc=None):
+        self.api = api
+        self.cal = cal
+        self.id = id
+        self.title = title
+        self.time = time
+        self.place = place
+        self.desc = desc
+
+    @classmethod
+    def time_to_start(cls, time):
+        if isinstance(time, datetime):
+            return {"dateTime": time.strftime(DATETIME), "date": None}
+        elif isinstance(time, date):
+            return {"date": time.strftime(DATE), "dateTime": None}
+        else:
+            raise TypeError
+
+    @classmethod
+    def from_api(cls, api, cal, item):
+        id = item["id"]
+        title = item["summary"]
         if "dateTime" in item["start"]:
-            start = datetime.strptime(item["start"]["dateTime"], DATETIME)
+            time = datetime.strptime(item["start"]["dateTime"], DATETIME)
         elif "date" in item["start"]:
-            start = datetime.strptime(item["start"]["date"], DATE).date()
-        msg += "\n{}. <b>{}</b> -- {}".format(pos + 1, item["summary"], pretty_date(start))
-        if "description" in item:
-            msg += "\n<i>{}</i>".format(item["description"])
-        if "location" in item:
-            msg += "\n{}".format(item["location"])
-    return msg
+            time = datetime.strptime(item["start"]["date"], DATE).date()
+        place = item.get("location")
+        desc = item.get("description")
+        return cls(api, cal, id, title, time, place, desc)
 
-def cal_show(cal, pos):
-    item = cache[cal][pos]
-    if "dateTime" in item["start"]:
-        start = datetime.strptime(item["start"]["dateTime"], DATETIME)
-    elif "date" in item["start"]:
-        start = datetime.strptime(item["start"]["date"], DATE).date()
-    msg = "<b>{}</b> -- {}".format(item["summary"], pretty_date(start))
-    if "description" in item:
-        msg += "\n<i>{}</i>".format(item["description"])
-    if "location" in item:
-        msg += "\n{}".format(item["location"])
-    return msg
+    @classmethod
+    def create(cls, api, cal, title, time, place=None, desc=None):
+        id = api.insert(calendarId=cal.id, body={"summary": title,
+                                                 "start": cls.time_to_start(time),
+                                                 "end": cls.time_to_start(time),
+                                                 "location": place,
+                                                 "description": desc}).execute()["id"]
+        return cls(api, cal, id, title, time, place, desc)
 
-def cal_add(cal, what, when, where=None, desc=None):
-    data = {"summary": what, "start": {}}
-    try:
-        data["start"]["dateTime"] = datetime.strptime(when, "%d/%m/%Y %H:%M").strftime(DATETIME)
-    except ValueError:
+    def update(self, title=None, time=None, place=None, desc=None):
+        data = {}
+        if title:
+            data["summary"] = title
+        if time:
+            data["start"] = data["end"] = self.time_to_start(time)
+        if place is not None:
+            data["location"] = place
+        if desc is not None:
+            data["description"] = desc
+        self.api.patch(calendarId=self.cal.id, eventId=self.id, body=data).execute()
+        if title:
+            self.title = title
+        if time:
+            self.time = time
+        if place is not None:
+            self.place = place
+        if desc is not None:
+            self.desc = desc
+
+    def delete(self):
+        self.api.delete(calendarId=self.cal.id, eventId=self.id).execute()
+
+
+class Calendar(object):
+
+    def __init__(self, api, id):
+        self.api = api
+        self.id = id
+        self.events = None
+
+    def sync(self):
+        resp = self.api.list(calendarId=self.id, timeMin=date.today().strftime(DATETIME),
+                             singleEvents=True, orderBy="startTime").execute()
+        self.events = [Event.from_api(api, self, item) for item in resp["items"]]
+
+    def create(self, title, time, place=None, desc=None):
+        return Event.create(self.api, self, title, time, place, desc)
+
+
+class Responder(object):
+
+    def __init__(self, cal):
+        self.cal = cal
+
+    def sync(self):
+        self.cal.sync()
+
+    def list(self):
+        if self.cal.events is None:
+            self.sync()
+        msg = "Upcoming events:"
+        for pos, event in enumerate(self.cal.events):
+            msg += "\n{}. <b>{}</b> -- {}".format(pos + 1, event.title, pretty_date(event.time))
+            if event.desc:
+                msg += "\n<i>{}</i>".format(event.desc)
+            if event.place:
+                msg += "\n{}".format(event.place)
+        return msg
+
+    def show(self, pos):
+        if self.cal.events is None:
+            self.sync()
         try:
-            data["start"]["date"] = datetime.strptime(when, "%d/%m/%Y").strftime(DATE)
+            event = self.cal.events[int(pos) - 1]
         except ValueError:
-            return "Couldn't parse the date.  Make sure it's in `dd/mm/yyyy hh:mm` format."
-    data["end"] = data["start"]
-    if where:
-        data["location"] = where
-    if desc:
-        data["description"] = desc
-    service.events().insert(calendarId=cal, body=data).execute()
-    return "Added <b>{}</b> to the calendar.".format(data["summary"])
+            return "Use the number given in the event list to remove events."
+        except IndexError:
+            return "Don't know about that event."
+        else:
+            msg = "<b>{}</b> -- {}".format(event.title, pretty_date(event.time))
+            if event.desc:
+                msg += "\n<i>{}</i>".format(event.desc)
+            if event.place:
+                msg += "\n{}".format(event.place)
+            return msg
 
-def cal_edit(cal, pos, what=None, when=None, where=None, desc=None):
-    data = {}
-    if what:
-        data["summary"] = what
-    if when:
+    def add(self, title, time_str, *args):
         try:
-            data["start"]["dateTime"] = datetime.strptime(when, "%d/%m/%Y %H:%M").strftime(DATETIME)
+            time = parse_date(time_str)
         except ValueError:
-            try:
-                data["start"]["date"] = datetime.strptime(when, "%d/%m/%Y").strftime(DATE)
-            except ValueError:
-                return "Couldn't parse the date.  Make sure it's in `dd/mm/yyyy hh:mm` format."
-        data["end"] = data["start"]
-    if where is not None:
-        data["location"] = where
-    if desc is not None:
-        data["description"] = desc
-    service.events().patch(calendarId=cal, eventId=cache[cal][pos]["id"], body=data).execute()
-    return "Updated <b>{}</b> on the calendar.".format(data.get("summary", cache[cal].pop(pos)["summary"]))
+            return "Couldn't parse the date.  Try writing it in <i>dd/mm/yyyy hh:mm</i> format."
+        place = None
+        desc = None
+        if len(args) >= 2 and args[0] == "at":
+            place = args[1]
+            args = args[2:]
+        if len(args) >= 1:
+            desc = args[0]
+        event = self.cal.create(title, time, place, desc)
+        return "Added <b>{}</b> to the calendar.".format(event.title)
 
-def cal_del(cal, pos):
-    service.events().delete(calendarId=cal, eventId=cache[cal][pos]["id"]).execute()
-    item = cache[cal].pop(pos)
-    return "Removed <b>{}</b> from the calendar.".format(item["summary"])
+    def edit(self, pos, *args):
+        if self.cal.events is None:
+            self.sync()
+        try:
+            event = self.cal.events[int(pos) - 1]
+        except ValueError:
+            return "Use the number given in the event list to remove events."
+        except IndexError:
+            return "Don't know about that event."
+        else:
+            data = {}
+            for field, value in zip(args[0::2], args[1::2]):
+                if field == "time":
+                    try:
+                        value = parse_date(value)
+                    except ValueError:
+                        return "Couldn't parse the date.  Try writing it in <i>dd/mm/yyyy hh:mm</i> format."
+                elif field not in ("title", "place", "desc"):
+                    return "You can edit the <i>title</i>, <i>time</i>, <i>place</i> or <i>desc</i> of an event."
+                data[field] = value
+            event.update(**data)
+            return "Updated <b>{}</b> on the calendar.".format(event.title)
+
+    def remove(self, pos):
+        if self.cal.events is None:
+            self.sync()
+        try:
+            event = self.cal.events[int(pos) - 1]
+        except ValueError:
+            return "Use the number given in the event list to remove events."
+        except IndexError:
+            return "Don't know about that event."
+        else:
+            event.delete()
+            return "Removed <b>{}</b> from the calendar.".format(event.title)
+
+
+def _initialise(bot):
+    global config, api
+    config = bot.get_config_option("gcal")
+    if not config or "secrets" not in config:
+        logger.error("gcal: missing path to secrets file")
+        return
+    store = Storage(config["secrets"])
+    http = store.get().authorize(Http())
+    api = build("calendar", "v3", http=http).events()
+    plugins.register_user_command(["calendar"])
+
 
 def calendar(bot, event, *args):
     args = shlex.split(event.text)[2:] # better handling of quotes
-    cal = None
+    cal_id = None
     try:
         ho_config = bot.memory.get_by_path(["conv_data", event.conv.id_, "gcal"])
     except KeyError:
@@ -161,84 +263,43 @@ def calendar(bot, event, *args):
         if not bot.memory.exists(["conv_data", event.conv.id_]):
             bot.memory.set_by_path(["conv_data", event.conv.id_], {})
         bot.memory.set_by_path(["conv_data", event.conv.id_, "gcal"], ho_config)
-    cal = ho_config.get("id", config.get("id", "primary"))
+    cal_id = ho_config.get("id", config.get("id", "primary"))
+    try:
+        resp = resps[cal_id]
+    except KeyError:
+        resp = Responder(Calendar(api, cal_id))
     msg = None
     if not args:
         args = ["list"]
-    if args[0] == "help":
-        msg = "Usage:\n" \
-              "- list events: `/bot calendar list`\n" \
-              "- show a single event: `/bot calendar show <pos>`\n" \
-              "- add a new event: `/bot calendar add \"<what>\" \"<when>\" [at \"where\"] [\"description\"]`" \
-              "- update an event: `/bot calendar update <pos> <title/date/place/description> \"<update>\" [...]`" \
-              "- remove an event: `/bot calendar remove <pos>`"
-    elif args[0] == "list":
-        msg = cal_list(cal)
+    if args[0] == "list":
+        msg = resp.list()
     elif args[0] == "show":
-        if not cal in cache:
-            msg = "Need to refresh the list of events first, try `/bot calendar list`."
-        else:
-            try:
-                pos = int(args[1]) - 1
-            except ValueError:
-                msg = "Use the number given in the event list to remove events."
-            except IndexError:
-                msg = "Don't know about that event.  See `/bot calendar list` for current events."
-            else:
-                msg = cal_show(cal, pos)
+        try:
+            msg = resp.show(*args[1:])
+        except TypeError:
+            msg = "Usage: /bot calendar show <i>pos</i>"
     elif args[0] == "add":
-        if len(args) < 3 or not args[1] or not args[2]:
-            msg = "Need to specify both what and when."
-        else:
-            when = args[2]
-            what = args[1]
-            where = None
-            desc = None
-            if len(args) > 4 and args[3] == "at":
-                where = args[4]
-                if len(args) > 5:
-                    desc = args[5]
-            elif len(args) > 3:
-                desc = args[3]
-            msg = cal_add(cal, what, when, where, desc)
-    elif args[0] == "update":
-        if not cal in cache:
-            msg = "Need to refresh the list of events first, try `/bot calendar list`."
-        elif len(args) < 4:
-            msg = "Need to specify the event number, field to update, and the update itself."
-        else:
-            try:
-                pos = int(args[1]) - 1
-            except ValueError:
-                msg = "Use the number given in the event list to update events."
-            except IndexError:
-                msg = "Don't know about that event.  See `/bot calendar list` for current events."
-            else:
-                data = {}
-                try:
-                    for field, value in zip(args[2::2], args[3::2]):
-                        attr = {"title": "what",
-                                "date": "when",
-                                "place": "where",
-                                "description": "desc"}[field]
-                        data[attr] = value
-                except KeyError:
-                    msg = "You can update the `title`, `date`, `place` or `description` of the event."
-                msg = cal_edit(cal, pos, **data)
+        try:
+            msg = resp.add(*args[1:])
+        except TypeError:
+            msg = "Usage: /bot calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]"
+    elif args[0] == "edit":
+        try:
+            msg = resp.edit(*args[1:])
+        except TypeError:
+            msg = "Usage: /bot calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]"
     elif args[0] == "remove":
-        if not cal in cache:
-            msg = "Need to refresh the list of events first, try `/bot calendar list`."
-        else:
-            try:
-                pos = int(args[1]) - 1
-            except ValueError:
-                msg = "Use the number given in the event list to remove events."
-            except IndexError:
-                msg = "Don't know about that event.  See `/bot calendar list` for current events."
-            else:
-                msg = cal_del(cal, pos)
+        try:
+            msg = resp.remove(*args[1:])
+        except TypeError:
+            msg = "Usage: /bot calendar remove <i>pos</i>"
     else:
-        msg = "Unknown command, try `help` for a list."
+        msg = "Usage:\n" \
+              "/bot calendar list [past]\n" \
+              "/bot calendar show <i>pos</i>\n" \
+              "/bot calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]\n" \
+              "/bot calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]\n" \
+              "/bot calendar remove <i>pos</i>"
     if msg:
         yield from bot.coro_send_message(event.conv_id, msg)
 
