@@ -13,7 +13,7 @@ Config keys (per-chat config goes under `conv_data.<conv_id>.gcal`):
 
 
 from argparse import ArgumentParser
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from httplib2 import Http
 import logging
 import shlex
@@ -107,7 +107,7 @@ class Event(object):
     def create(cls, api, cal, title, time, place=None, desc=None):
         id = api.insert(calendarId=cal.id, body={"summary": title,
                                                  "start": cls.time_to_start(time),
-                                                 "end": cls.time_to_start(time),
+                                                 "end": cls.time_to_start(time + timedelta(hours=1)),
                                                  "location": place,
                                                  "description": desc}).execute()["id"]
         return cls(api, cal, id, title, time, place, desc)
@@ -117,7 +117,8 @@ class Event(object):
         if title:
             data["summary"] = title
         if time:
-            data["start"] = data["end"] = self.time_to_start(time)
+            data["start"] = self.time_to_start(time)
+            data["end"] = self.time_to_start(time + timedelta(hours=1))
         if place is not None:
             data["location"] = place
         if desc is not None:
