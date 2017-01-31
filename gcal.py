@@ -12,7 +12,6 @@ Config keys (per-chat config goes under `conv_data.<conv_id>.gcal`):
 """
 
 
-from argparse import ArgumentParser
 from datetime import date, datetime, timedelta
 from httplib2 import Http
 import logging
@@ -164,6 +163,8 @@ class Responder(object):
     def list(self):
         if self.cal.events is None:
             self.sync()
+        if not self.cal.events:
+            return "Nothing planned yet."
         msg = "Upcoming events:"
         for pos, event in enumerate(self.cal.events):
             msg += "\n{}. <b>{}</b> -- {}".format(pos + 1, event.title, pretty_date(event.time))
@@ -296,7 +297,7 @@ def calendar(bot, event, *args):
             msg = "Usage: /bot calendar remove <i>pos</i>"
     else:
         msg = "Usage:\n" \
-              "/bot calendar list [past]\n" \
+              "/bot calendar list\n" \
               "/bot calendar show <i>pos</i>\n" \
               "/bot calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]\n" \
               "/bot calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]\n" \
@@ -306,6 +307,8 @@ def calendar(bot, event, *args):
 
 
 if __name__ == "__main__":
+
+    from argparse import ArgumentParser
 
     from oauth2client import tools
 
