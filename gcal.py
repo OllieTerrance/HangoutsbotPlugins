@@ -256,6 +256,14 @@ def _initialise(bot):
 
 
 def calendar(bot, event, *args):
+    """
+    Displays and manages upcoming events.
+    - [botalias] calendar list
+    - [botalias] calendar show <i>pos</i>
+    - [botalias] calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]
+    - [botalias] calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]
+    - [botalias] calendar remove <i>pos</i>
+    """
     args = shlex.split(event.text)[2:] # better handling of quotes
     cal_id = None
     try:
@@ -271,6 +279,7 @@ def calendar(bot, event, *args):
     except KeyError:
         resp = Responder(Calendar(api, cal_id))
     msg = None
+    botalias = bot.memory.get("bot.command_aliases")[0]
     if not args:
         args = ["list"]
     if args[0] == "list":
@@ -279,31 +288,28 @@ def calendar(bot, event, *args):
         try:
             msg = resp.show(*args[1:])
         except TypeError:
-            msg = "Usage: /bot calendar show <i>pos</i>"
+            msg = "Usage: [botalias] calendar show <i>pos</i>"
     elif args[0] == "add":
         try:
             msg = resp.add(*args[1:])
         except TypeError:
-            msg = "Usage: /bot calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]"
+            msg = "Usage: [botalias] calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]"
     elif args[0] == "edit":
         try:
             msg = resp.edit(*args[1:])
         except TypeError:
-            msg = "Usage: /bot calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]"
+            msg = "Usage: [botalias] calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]"
     elif args[0] == "remove":
         try:
             msg = resp.remove(*args[1:])
         except TypeError:
-            msg = "Usage: /bot calendar remove <i>pos</i>"
+            msg = "Usage: [botalias] calendar remove <i>pos</i>"
     else:
-        msg = "Usage:\n" \
-              "/bot calendar list\n" \
-              "/bot calendar show <i>pos</i>\n" \
-              "/bot calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]\n" \
-              "/bot calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]\n" \
-              "/bot calendar remove <i>pos</i>"
+        msg = "Unknown subcommand, try [botalias] help calendar."
     if msg:
-        yield from bot.coro_send_message(event.conv_id, msg)
+        yield from bot.coro_send_message(event.conv_id, msg.replace("[botalias]", botalias))
+
+calendar.__doc__ = calendar.__doc__.strip().replace("\n    ", "\n")
 
 
 if __name__ == "__main__":
