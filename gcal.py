@@ -256,14 +256,12 @@ def _initialise(bot):
 
 
 def calendar(bot, event, *args):
-    """
-    Displays and manages upcoming events.
-    - [botalias] calendar list
-    - [botalias] calendar show <i>pos</i>
-    - [botalias] calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]
-    - [botalias] calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]
-    - [botalias] calendar remove <i>pos</i>
-    """
+    ("""Displays and manages upcoming events.<br>"""
+     """- [botalias] calendar list<br>"""
+     """- [botalias] calendar show <i>pos</i><br>"""
+     """- [botalias] calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]<br>"""
+     """- [botalias] calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]<br>"""
+     """- [botalias] calendar remove <i>pos</i>""")
     args = shlex.split(event.text)[2:] # better handling of quotes
     cal_id = None
     try:
