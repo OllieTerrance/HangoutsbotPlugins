@@ -1,9 +1,14 @@
+import logging
 import re
 import shlex
 
+from dateutil.parser import parse as date_parse
 import requests
 
 import plugins
+
+
+log = logging.getLogger(__name__)
 
 
 def _parse_args(bot, event):
@@ -22,16 +27,18 @@ def _initialise(bot):
 
 
 def doodle(bot, event, *args):
-    ("""Create a new Doodle poll: <b>doodle "title" "option" ["option" ...] [+yesno] [+hidden]</b>\n"""
-     """Use quotes to contain spaces.  For date options, use YYYYMMDD or YYYYMMDDHHMM format.\n"""
-     """Example: <i>doodle "My Event" 20160101 20160102 201601013 +hidden</i>\n"""
+    ("""Create a new Doodle poll: <b>doodle <i>"title" "option" ["option" ...] [+text] [+yesno] [+hidden]</i></b><br>"""
+     """Use quotes to contain spaces.  Options are assumed to be dates, unless <b>+text</b> is used.<br>"""
+     """Example: <i>doodle "My Event" 2016-01-01 2016-01-02 2016-01-03 +hidden</i><br>"""
      """You'll need to give Doodle an email address first -- use the <b>doodle_email</b> command to set one.""")
     args = _parse_args(bot, event)
-    kwargs = {"type": "TEXT", "optionsMode": "text", "ifNeedBe": "true", "hidden": "false", "options[]": []}
+    kwargs = {"ifNeedBe": "true", "hidden": "false", "options[]": []}
     for arg in args[1:]:
         if arg[0] == "+":
             flag = arg[1:]
-            if flag == "yesno":
+            if flag == "text":
+                kwargs["type"] = "TEXT"
+            elif flag == "yesno":
                 kwargs["ifNeedBe"] = "false"
             elif flag == "hidden":
                 kwargs["hidden"] = "true"
@@ -45,14 +52,26 @@ def doodle(bot, event, *args):
     if "title" not in kwargs or not kwargs["options[]"]:
         yield from bot.coro_send_message(event.conv_id, "<i>Needs a title and at least one option.</i>")
         return
-    if all(re.match(r"\d{8}(\d{4})?", o) for o in kwargs["options[]"]):
-        kwargs.update({"type": "DATE", "optionsMode": "date"})
+    if "type" not in kwargs:
+        dates = []
+        try:
+            for opt in kwargs["options[]"]:
+                dates.append(date_parse(opt))
+        except ValueError:
+            log.debug("Failed to parse a date, defaulting to text poll type")
+            kwargs["type"] = "TEXT"
+        else:
+            fmt = "YYYYMMDDHHMM" if any((d.hour > 0 or d.minute > 0) for d in dates) else "YYYYMMDD"
+            log.debug("Using date poll type{0}".format("" if fmt == "YYYYMMDD" else " with times"))
+            kwargs.update({"type": "DATE", "options[]": [d.strftime(fmt) for d in dates]})
     try:
         email = bot.memory.get_by_path(["user_data", event.user.id_.chat_id, "doodle_email"])
     except KeyError:
         yield from bot.coro_send_message(event.conv_id, "<i>No Doodle email set (see <b>help doodle_email</b>).</i>")
         return
-    kwargs.update({"initiatorEmail": email, "initiatorAlias": event.user.full_name})
+    kwargs.update({"initiatorEmail": email, "initiatorAlias": event.user.full_name,
+                   "optionsMode": kwargs["type"].lower()})
+    log.info("Creating {0} poll \"{1}\"".format(kwargs["title"], kwargs["optionsMode"]))
     resp = requests.post("https://doodle.com/np/new-polls/", data=kwargs)
     if not resp.ok:
         yield from bot.coro_send_message(event.conv_id, "Got a {} response from Doodle...".format(resp.status_code))
@@ -68,7 +87,8 @@ def doodle(bot, event, *args):
 
 
 def doodle_email(bot, event, *args):
-    """Set an email address to be used for Doodle poll administration: <b>doodle_email <i>email</i></b>"""
+    ("""Set an email address to be used for Doodle poll administration: <b>doodle_email <i>email</i></b><br>"""
+     """This address will receive email notifications when other people fill in the poll.""")
     if args:
         bot.memory.set_by_path(["user_data", event.user.id_.chat_id, "doodle_email"], args[0])
         bot.memory.save()
