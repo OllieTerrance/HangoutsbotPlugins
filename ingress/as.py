@@ -39,6 +39,8 @@ def agentstats(bot, event, *args):
     scores = {}
     try:
         for agent, progress in resp.json().items():
+            if field == "guardian" and progress[field] == "-":
+                continue
             scores[agent] = progress[field]
     except KeyError:
         yield from bot.coro_send_message(event.conv_id, "<i>Field <b>{0}</b> is not recognised.</i>".format(field))
@@ -52,7 +54,7 @@ def agentstats(bot, event, *args):
 
 
 def as_setgroup(bot, event, *args):
-    """Set an Agent Stats group for this conversation: <b>as_group <i>group</i></b>"""
+    """Set an Agent Stats group for this conversation: <b>as_setgroup <i>group</i></b>"""
     group = args[0] if args else None
     bot.memory.set_by_path(["conv_data", event.conv.id_, "as"], group)
     yield from bot.coro_send_message(event.conv_id, "<i>Agent Stats group {0}.</i>".format("set" if group else "cleared"))
