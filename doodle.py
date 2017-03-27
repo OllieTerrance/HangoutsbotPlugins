@@ -61,8 +61,8 @@ def doodle(bot, event, *args):
             log.debug("Failed to parse a date, defaulting to text poll type")
             kwargs["type"] = "TEXT"
         else:
-            fmt = "YYYYMMDDHHMM" if any((d.hour > 0 or d.minute > 0) for d in dates) else "YYYYMMDD"
-            log.debug("Using date poll type{0}".format("" if fmt == "YYYYMMDD" else " with times"))
+            fmt = "%Y%m%d%H%M" if any((d.hour > 0 or d.minute > 0) for d in dates) else "%Y%m%d"
+            log.debug("Using date poll type{0}".format("" if fmt == "%Y%M%D" else " with times"))
             kwargs.update({"type": "DATE", "options[]": [d.strftime(fmt) for d in dates]})
     try:
         email = bot.memory.get_by_path(["user_data", event.user.id_.chat_id, "doodle_email"])
@@ -71,7 +71,7 @@ def doodle(bot, event, *args):
         return
     kwargs.update({"initiatorEmail": email, "initiatorAlias": event.user.full_name,
                    "optionsMode": kwargs["type"].lower()})
-    log.info("Creating {0} poll \"{1}\"".format(kwargs["title"], kwargs["optionsMode"]))
+    log.info("Creating {0} poll \"{1}\"".format(kwargs["optionsMode"], kwargs["title"]))
     resp = requests.post("https://doodle.com/np/new-polls/", data=kwargs)
     if not resp.ok:
         yield from bot.coro_send_message(event.conv_id, "Got a {} response from Doodle...".format(resp.status_code))
