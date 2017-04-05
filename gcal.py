@@ -257,11 +257,11 @@ def _initialise(bot):
 
 def calendar(bot, event, *args):
     ("""Displays and manages upcoming events.<br>"""
-     """- [botalias] calendar list<br>"""
-     """- [botalias] calendar show <i>pos</i><br>"""
-     """- [botalias] calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]<br>"""
-     """- [botalias] calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]<br>"""
-     """- [botalias] calendar remove <i>pos</i>""")
+     """- /bot calendar list<br>"""
+     """- /bot calendar show <i>pos</i><br>"""
+     """- /bot calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]<br>"""
+     """- /bot calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]<br>"""
+     """- /bot calendar remove <i>pos</i>""")
     args = shlex.split(event.text)[2:] # better handling of quotes
     cal_id = None
     try:
@@ -286,26 +286,26 @@ def calendar(bot, event, *args):
         try:
             msg = resp.show(*args[1:])
         except TypeError:
-            msg = "Usage: [botalias] calendar show <i>pos</i>"
+            msg = "Usage: /bot calendar show <i>pos</i>"
     elif args[0] == "add":
         try:
             msg = resp.add(*args[1:])
         except TypeError:
-            msg = "Usage: [botalias] calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]"
+            msg = "Usage: /bot calendar add <i>\"what\"</i> <i>\"when\"</i> [at <i>\"where\"</i>] [<i>\"description\"</i>]"
     elif args[0] == "edit":
         try:
             msg = resp.edit(*args[1:])
         except TypeError:
-            msg = "Usage: [botalias] calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]"
+            msg = "Usage: /bot calendar edit <i>pos</i> <i>field</i> <i>\"update\"</i> [...]"
     elif args[0] == "remove":
         try:
             msg = resp.remove(*args[1:])
         except TypeError:
-            msg = "Usage: [botalias] calendar remove <i>pos</i>"
+            msg = "Usage: /bot calendar remove <i>pos</i>"
     else:
-        msg = "Unknown subcommand, try [botalias] help calendar."
+        msg = "Unknown subcommand, try /bot help calendar."
     if msg:
-        yield from bot.coro_send_message(event.conv_id, msg.replace("[botalias]", botalias))
+        yield from bot.coro_send_message(event.conv_id, msg.replace("/bot", botalias))
 
 calendar.__doc__ = calendar.__doc__.strip().replace("\n    ", "\n")
 
