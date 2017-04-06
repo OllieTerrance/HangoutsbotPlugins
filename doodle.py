@@ -79,7 +79,7 @@ def doodle(bot, event, *args):
     json = resp.json()
     yield from bot.coro_send_message(event.conv_id, """Doodle created! <a href="https://doodle.com/poll/{0}">"""
                                                     "https://doodle.com/poll/{0}</a>".format(json["id"]))
-    user_1to1 = yield from bot.get_1to1(event.user_id.chat_id)
+    user_1to1 = yield from bot.get_1to1(event.user.id_.chat_id)
     yield from bot.coro_send_message(user_1to1, "Here's the administration link for your Doodle poll: "
                                                 """<a href="https://doodle.com/poll/{0}{1}/admin">"""
                                                 "https://doodle.com/poll/{0}{1}/admin</a>"
@@ -95,7 +95,7 @@ def doodle_email(bot, event, *args):
         yield from bot.coro_send_message(event.conv_id, "<i>Your Doodle email has been set.</i>")
     else:
         try:
-            email = bot.memory.set_by_path(["user_data", event.user.id_.chat_id, "doodle_email"])
+            email = bot.memory.get_by_path(["user_data", event.user.id_.chat_id, "doodle_email"])
             yield from bot.coro_send_message(event.conv_id, "<i>Your Doodle email is set.  You can update it "
                                                             "with <b>doodle_email [new email]</b>.</i>")
         except KeyError:
